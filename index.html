@@ -22,7 +22,7 @@ body:has(#start:not([hidden])) .top>div:first-child{visibility:hidden}
 <canvas tabindex="0" id="sky" aria-label="Fly your jet past birds and UFOs. Drag to steer or use arrow keys and W A S D."></canvas>
 <div class="hud"><div class="top"><div><div class="eyebrow">ANSH’S / JETSTREAM RUSH</div><div id="score" class="score">0</div><div class="sub">BEST <span id="best">0</span> <span id="combo"></span></div></div><div class="buttons"><button id="sound" class="icon" aria-label="Turn sound on" title="Sound">♪</button><button id="pause" class="icon" aria-label="Pause game" title="Pause" hidden>Ⅱ</button></div></div><div class="bottom" id="flightHud" hidden><div><div id="lives" class="lives" aria-label="3 hull points">●●●</div><div class="stat"><span id="speed">720</span> KM/H</div><div id="sector" class="sub">01 / OPEN SKIES</div></div><div class="flightActions"><div id="powers" role="status">AUTO CANNON</div></div></div></div>
 <div id="mission"><span id="missionText">PILOT CHALLENGE</span><div><i id="missionFill"></i></div></div><div id="hint"></div><div id="notice" role="status"></div><div id="flash"></div>
-<section id="start" class="overlay"><div class="panel"><div class="badge">ONE PILOT. INFINITE SKIES.</div><div class="pilot-name">ANSH’S</div><h1>JETSTREAM<span>RUSH.</span></h1><p>Line up. Open fire.<br>Own the sky.</p><div class="instructions"><div><b>↔</b>Drag to steer<br>Easy flight assist</div><div><b>◉</b>Aim at UFOs<br>Dodge their beams</div><div><b>ϟ</b>Grab powerups<br>Follow the rings</div></div><button class="primary" id="play">LET'S FLY ↗</button><button id="settingsButton" class="text-button">Flight settings</button><p class="fine">Arrows / WASD or drag anywhere.<br>Pickups first. Rings next. Then UFOs.</p></div></section>
+<section id="start" class="overlay"><div class="panel"><div class="badge">ONE PILOT. INFINITE SKIES.</div><div class="pilot-name">ANSH’S</div><h1>JETSTREAM<span>RUSH.</span></h1><p>Line up. Open fire.<br>Own the sky.</p><div class="instructions"><div><b>↔</b>Drag to steer<br>Easy flight assist</div><div><b>◉</b>Aim at UFOs<br>Dodge beams & bombs</div><div><b>ϟ</b>Grab powerups<br>Follow the rings</div></div><button class="primary" id="play">LET'S FLY ↗</button><button id="settingsButton" class="text-button">Flight settings</button><p class="fine">Arrows / WASD or drag anywhere.<br>Pickups. Rings. UFOs. Dodge the floating bombs.</p></div></section>
 <section id="end" class="overlay" hidden><div class="panel"><div class="badge" id="record">FLIGHT COMPLETE</div><h2 id="endTitle">A good run. Go again?</h2><div class="result" id="finalScore">0</div><div class="eyebrow" id="pilotRank">FLIGHT SCORE</div><div class="result-grid"><div><b id="finalDistance">0</b><span>METRES</span></div><div><b id="finalDodges">0</b><span>UFOS DESTROYED</span></div><div><b id="finalCombo">1×</b><span>TOP MULTIPLIER</span></div></div><p id="failure" class="fine"></p><button class="primary" id="retry">FLY AGAIN ↗</button><button class="secondary" id="share">Share your score</button></div></section>
 <section id="paused" class="overlay" hidden><div class="panel"><div class="badge">HOLDING PATTERN</div><h2>Take a breather.</h2><p>Your flight is paused.</p><button class="primary" id="resume">BACK TO THE SKY ↗</button><button id="pauseSettings" class="text-button">Flight settings</button></div></section>
 <div id="version">ANSH’S JETSTREAM RUSH • 02</div>
@@ -31,7 +31,7 @@ body:has(#start:not([hidden])) .top>div:first-child{visibility:hidden}
 /* Ansh's Jetstream Rush. Deterministic simulation, no browser dependencies. */
 'use strict';
 const Flight = (() => {
-  const VERSION = '0.8.0';
+  const VERSION = '0.9.0';
   const C = Object.freeze({step:1/120, xLimit:6.8, yLimit:4.1, rollRate:10, pitchRate:9,
     lateralForce:44, lateralDrag:3.4, verticalForce:29, verticalDrag:3.7,
     maxRoll:.86, maxPitch:.65, pilotRadius:.65, grace:1.6, boostSeconds:4,
@@ -62,6 +62,10 @@ const Flight = (() => {
     for(let i=slots.length-1;i>0;i--){let j=Math.floor(s.random()*(i+1));[slots[i],slots[j]]=[slots[j],slots[i]]}
     const count=Math.min(6,slots.length,4+Math.floor(s.encounter/4)),hazards=[];
     for(let i=0;i<count;i++){
+      // Balance columns before adding another target to the same lane.
+      const used=hazards.reduce((a,h)=>(a[Math.sign(h.x)+1]++,a),[0,0,0]);
+      let best=i;for(let j=i+1;j<slots.length;j++)if(used[slots[j]%3]<used[slots[best]%3])best=j;
+      [slots[i],slots[best]]=[slots[best],slots[i]];
       const p=cell(slots[i]);let type=s.encounter%5===0?'bird':'ufo';
 
       hazards.push({...p,baseX:p.x,type,r:type==='bird'?.82:type==='ufo'?1.1:.85,
@@ -83,7 +87,17 @@ const Flight = (() => {
     s.encounter++;s.netSent=false;s.active=true;s.encounterHits=0;s.encounterKills=0;
     const p=pattern(s),z=s.distance+travel(s.time,C.lead);s.encounterTotal=p.hazards.filter(o=>o.type==='ufo').length;
     const rows=s.encounter>=3?2:1;s.encounterTotal*=rows;
-    for(let row=0;row<rows;row++)for(const [i,h] of p.hazards.entries())s.entities.push({...h,z:z+row*85+i*9,done:false,hold:2.4,canBeam:row===0&&h.type==='ufo'&&s.encounter>=3&&i<(s.encounter>=10?2:1),beam:0,beamAge:0});
+    for(let row=0;row<rows;row++)for(const [i,h] of p.hazards.entries()){
+      // Vary hover depth so silhouettes stay separate while preserving the safe corridor.
+      s.entities.push({...h,z:z+row*85+i*9,done:false,hold:2.4,hoverZ:14+(i%2)*8,
+        canBeam:row===0&&h.type==='ufo'&&s.encounter>=3&&i<(s.encounter>=10?2:1),beam:0,beamAge:0});
+    }
+    // Stagger mines in depth so they never form an unavoidable wall.
+    const bombCount=Math.min(4,2+Math.floor(s.encounter/4));
+    for(let i=0;i<bombCount;i++){
+      const x=[-5.2,0,5.2][(i+s.encounter)%3],y=(s.random()-.5)*5.8;
+      s.entities.push({type:'bomb',x,y,baseX:x,baseY:y,z:z+45+i*65,r:.85,drift:.3,phase:s.random()*Math.PI*2,done:false});
+    }
     s.waveCount++;emit(s,'wave',{name:s.encounter%5===0?'BIRD CROSSING':s.encounter>=6?'ARMOURED SQUADRON':'UFO INTERCEPT',safe:p.safe,count:p.hazards.length});
   }
   function netGap(s){
@@ -162,6 +176,7 @@ const Flight = (() => {
     if(o.collected)return;
     if(o.type==='net'&&inNetGap(o,px,py)){s.score+=250;emit(s,'netClear');return}
     if(dist<o.r+C.pilotRadius){
+      if(o.type==='bomb'){o.collected=true;emit(s,'explosion',{x:o.x,y:o.y})}
       if(s.boost>0||s.shield>0||s.grace>0){if(s.boost>0){const bonus=40*s.combo;s.score+=bonus;emit(s,'smash',{x:o.x,y:o.y,bonus})}else emit(s,'deflect',{x:o.x,y:o.y});return}
       s.encounterHits++;s.streak=0;s.hp--;s.grace=C.grace;
       if(s.hp>0&&s.time>=s.recoveryAt&&!s.entities.some(e=>e.type==='repair'&&!e.done&&!e.collected)){s.recoveryAt=s.time+8;s.entities.push({type:'repair',x:px,y:py,baseX:px,z:s.distance+48,r:2.2,drift:0,phase:0,done:false});emit(s,'recovery')}
@@ -189,7 +204,8 @@ const Flight = (() => {
       if(o.collected)continue;
       if(o.type==='net'&&o.warning>0){o.z+=s.distance-oldDistance;o.warning=Math.max(0,o.warning-dt);if(o.warning===0)emit(s,'netFire')}
       o.x=o.baseX+Math.sin(s.time*1.3+o.phase)*o.drift;
-      if(o.type==='ufo'&&o.hold>0&&o.z-s.distance<=85){o.z+=s.distance-oldDistance;o.hold=Math.max(0,o.hold-dt)}
+      if(o.type==='bomb')o.y=o.baseY+Math.sin(s.time*1.7+o.phase)*.25;
+      if(o.type==='ufo'&&o.hold>0&&o.z-s.distance<=o.hoverZ){o.z+=s.distance-oldDistance;o.hold=Math.max(0,o.hold-dt)}
       const oldZ=o.z-oldDistance,z=o.z-s.distance;
       if(o.canBeam&&z>0){
         if(!o.beam&&z<speed(s.time)*1.8){o.beam=1;o.beamAge=0;emit(s,'beamWarning')}
@@ -327,7 +343,7 @@ if(typeof module!=='undefined')module.exports=Flight;
     $('finalDodges').textContent=sim.kills;$('finalCombo').textContent=sim.topCombo+'×';$('record').textContent=record?'NEW PERSONAL BEST':'FLIGHT RECORDER';
     $('endTitle').textContent=record?'Ansh owns the sky.':'Your next flight starts here.';
     $('pilotRank').textContent=(sim.time>=120?'ACE PILOT':sim.time>=60?'SQUADRON LEADER':'RISING PILOT')+' • SECTOR '+sim.encounter;
-    $('failure').textContent=sim.cause==='net'?'Energy net hit. Fly fully inside a green gap.':sim.cause==='bird'?'Caught the flock. Bank early to hold your line.':sim.cause==='ufo'?'UFO collision. Line up the gap before it reaches you.':'Beam hit. Leave the marked lane before it fires.';
+    $('failure').textContent=sim.cause==='bomb'?'Floating bomb hit. Steer around the flashing orange mines.':sim.cause==='net'?'Energy net hit. Fly fully inside a green gap.':sim.cause==='bird'?'Caught the flock. Bank early to hold your line.':sim.cause==='ufo'?'UFO collision. Line up the gap before it reaches you.':'Beam hit. Leave the marked lane before it fires.';
     $('failure').textContent+=' Next target: '+(sim.cleared<4?'clear sector 4 for twin cannons.':sim.cleared<8?'clear sector 8 for piercing cannons.':'beat sector '+(sim.encounter+1)+'.');$('share').textContent='Share your flight';$('retry').focus();sfx(80,.6,'sawtooth',.2);
   }
   $('share').onclick=async()=>{event('share_clicked');let data={title:"Ansh's Jetstream Rush",text:`I scored ${Math.floor(sim.score).toLocaleString()} in Ansh's Jetstream Rush. ${sim.kills} UFOs destroyed. Your turn.`};
@@ -354,6 +370,7 @@ if(typeof module!=='undefined')module.exports=Flight;
     if(e.type==='recovery')notice('REPAIR AHEAD • HOLD YOUR LINE','#bfe7ff');
     if(e.type==='repair'){notice('HULL REPAIRED +1','#bfe7ff');sfx(640,.23);burst(e.x,e.y,'#b4ebff')}
     if(e.type==='near'){sfx(500+e.combo*90,.09,'triangle',.12,(e.x-sim.player.x)/5);burst(e.x,e.y,'#dcffff',5)}
+    if(e.type==='explosion'){burst(e.x,e.y,'#ff9d45',32);sfx(65,.35,'sawtooth',.2)}
     if(e.type==='hit'){shake=.35;flash=.25;sfx(100,.25,'sawtooth',.25);burst(e.x,e.y,'#ffb597',26);if(sim.hp>0)notice('HULL HIT • HOLD YOUR LINE','#ffbc9d')}
     if(e.type==='invincible'){notice('INVINCIBLE • 5 SECONDS','#b2ffdc');sfx(720,.25);burst(sim.player.x,sim.player.y,'#aaffdc',20)}
     if(e.type==='boostReady'){notice('BOOST READY • GO AGAIN');sfx(950,.16)}
@@ -434,6 +451,15 @@ if(typeof module!=='undefined')module.exports=Flight;
       ctx.beginPath();ctx.moveTo(-r*1.45,-flap);ctx.lineTo(-r*.65,-r*.15);ctx.lineTo(0,r*.12);ctx.lineTo(r*.65,-r*.15);ctx.lineTo(r*1.45,-flap);ctx.stroke();ellipse(0,0,r*.17,r*.4,'#f3d8ae');ellipse(0,-r*.26,r*.17,r*.17,'#263d4c');
     }else if(o.type==='ufo'){
       ctx.rotate(Math.sin(clock*2+o.phase)*.12);ellipse(0,r*.18,r*1.25,r*.43,'#182a41');ellipse(0,-r*.18,r*.51,r*.47,o.hp>1?'#edb56d':'#73c5bd');ellipse(-r*.12,-r*.34,r*.16,r*.12,'#e0ffff');ellipse(0,0,r*1.3,r*.27,'#c6d7d4');ellipse(0,r*.14,r*1.18,r*.16,'#506878');for(let i=-2;i<=2;i++)ellipse(i*r*.39,r*.19,r*.08,r*.043,'#99ffdd');
+    }else if(o.type==='bomb'){
+      const pulse=.55+.45*Math.sin(clock*7+o.phase);
+      ctx.strokeStyle='#ffab56';ctx.lineWidth=Math.max(1.5,r*.11);
+      for(let i=0;i<8;i++){const a=i*Math.PI/4;ctx.beginPath();ctx.moveTo(Math.cos(a)*r*.7,Math.sin(a)*r*.7);ctx.lineTo(Math.cos(a)*r*1.18,Math.sin(a)*r*1.18);ctx.stroke()}
+      ellipse(0,0,r*.83,r*.83,'#202c3c');ctx.beginPath();ctx.arc(0,0,r*.83,0,Math.PI*2);ctx.stroke();
+      ellipse(-r*.22,-r*.27,r*.22,r*.14,'#617186');
+      ellipse(0,0,r*(.2+pulse*.08),r*(.2+pulse*.08),'#ff6c38');
+      ctx.strokeStyle='#ffe7af';ctx.lineWidth=Math.max(1,r*.09);ctx.beginPath();ctx.moveTo(-r*.27,r*.4);ctx.lineTo(r*.27,r*.4);ctx.stroke();
+      if(z<65){ctx.fillStyle='#ffd39d';ctx.font='bold '+Math.max(9,Math.min(12,r*.3))+'px Arial';ctx.textAlign='center';ctx.fillText('BOMB',0,-r*1.45)}
     }else if(o.type==='pulse'){
       const g=ctx.createRadialGradient(0,0,0,0,0,r*1.65);g.addColorStop(0,'#fff3ca');g.addColorStop(.35,'#ffaa80');g.addColorStop(1,'#f47a6600');ctx.fillStyle=g;ctx.fillRect(-r*1.7,-r*1.7,r*3.4,r*3.4);ctx.strokeStyle='#fff2d6';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,r*.6,0,Math.PI*2);ctx.stroke();
     }else{
@@ -531,3 +557,4 @@ if(typeof module!=='undefined')module.exports=Flight;
 
 </script>
 </body></html>
+
